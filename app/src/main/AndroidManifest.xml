@@ -3,6 +3,7 @@
     package="ccc.chess.engines">
 	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <application
+        android:name="ccc.chess.engines.ChessEnginesApplication"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="Chess Engines OEX"
@@ -27,6 +28,15 @@
             android:name="ccc.chess.engines.MyEngineProvider"
             android:authorities="ccc.chess.engines.MyEngineProvider"
             android:exported="true" />
+
+        <!-- Calvin is an in-process Java engine. It is intentionally not listed as an OEX executable. -->
+        <service
+            android:name="com.kelseyde.calvin.android.CalvinEngineService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="ccc.chess.engines.action.BIND_CALVIN_ENGINE" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>
