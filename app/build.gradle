@@ -1,14 +1,104 @@
-apply plugin: 'com.android.application'
+import java.net.URL
+
+plugins {
+    id 'com.android.application'
+}
+
+final String calvinNetworkName = 'calvin1024_8b.nnue'
+final String calvinNetworkUrl = 'https://raw.githubusercontent.com/kelseyde/calvin-chess-engine/main/src/main/resources/calvin1024_8b.nnue'
+// 8 buckets * (768 * 1024 input weights) + 1024 input biases + 2048 output weights + 1 output bias, all int16.
+final long calvinExpectedNetworkBytes = (8L * 768L * 1024L + 1024L + 2048L + 1L) * 2L
+def calvinAssetsDir = layout.buildDirectory.dir('generated/calvinAssets')
+def calvinNetworkFile = calvinAssetsDir.map { it.file(calvinNetworkName) }
+
+tasks.register('downloadCalvinNetwork') {
+    group = 'build setup'
+    description = 'Downloads the official Calvin NNUE network into generated Android assets.'
+    outputs.file(calvinNetworkFile)
+    outputs.upToDateWhen {
+        File file = calvinNetworkFile.get().asFile
+        file.isFile() && file.length() == calvinExpectedNetworkBytes
+    }
+    doLast {
+        File target = calvinNetworkFile.get().asFile
+        if (target.isFile() && target.length() == calvinExpectedNetworkBytes) {
+            logger.lifecycle("Calvin NNUE already downloaded: ${target.length()} bytes")
+            return
+        }
+        target.parentFile.mkdirs()
+        File temporary = new File(target.parentFile, target.name + '.download')
+        URL url = new URL(calvinNetworkUrl)
+        def connection = url.openConnection()
+        connection.connectTimeout = 30000
+        connection.readTimeout = 120000
+        connection.setRequestProperty('User-Agent', 'ChessEngines-Calvin-Android-Gradle')
+        connection.connect()
+        connection.getInputStream().withCloseable { input ->
+            temporary.withOutputStream { output ->
+                byte[] buffer = new byte[64 * 1024]
+                int count
+                while ((count = input.read(buffer)) != -1) {
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+        if (!temporary.isFile() || temporary.length() != calvinExpectedNetworkBytes) {
+            long actualBytes = temporary.isFile() ? temporary.length() : 0L
+            temporary.delete()
+            throw new GradleException("Downloaded Calvin NNUE has an unexpected size (${actualBytes} bytes; expected ${calvinExpectedNetworkBytes}). URL: ${calvinNetworkUrl}")
+        }
+        if (target.exists() && !target.delete()) {
+            temporary.delete()
+            throw new GradleException("Cannot replace existing generated NNUE file: ${target}")
+        }
+        if (!temporary.renameTo(target)) {
+            temporary.delete()
+            throw new GradleException("Cannot move downloaded Calvin NNUE into generated assets: ${target}")
+        }
+        logger.lifecycle("Downloaded Calvin NNUE (${target.length()} bytes)")
+    }
+}
+
 android {
-    compileSdkVersion 29
-    buildToolsVersion "29.0.3"
+    namespace 'ccc.chess.engines'
+    compileSdk 35
 
     defaultConfig {
-        applicationId "ccc.chess.engines"
-        minSdkVersion 19
-        targetSdkVersion 29
-        versionCode 20
-        versionName "2.6"
+        applicationId 'ccc.chess.engines'
+        minSdk 19
+        targetSdk 29
+        versionCode 21
+        versionName '2.7-calvin'
+        // Required by Android core-library desugaring when minSdk <= 20.
+        multiDexEnabled true
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+
+    sourceSets {
+        main {
+            assets.srcDir(calvinAssetsDir)
+            // Do not package the source OEX native engine executables in this Java-engine build.
+            jniLibs.setSrcDirs([])
+        }
+    }
+
+    androidResources {
+        noCompress += ['nnue']
+    }
+
+    packaging {
+        jniLibs {
+            excludes += ['**/*.so']
+        }
     }
 
     buildTypes {
@@ -18,6 +108,11 @@ android {
     }
 }
 
+tasks.named('preBuild').configure {
+    dependsOn(tasks.named('downloadCalvinNetwork'))
+}
+
 dependencies {
-    implementation 'androidx.core:core:1.3.2'
+    implementation 'androidx.multidex:multidex:2.0.1'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
 }
