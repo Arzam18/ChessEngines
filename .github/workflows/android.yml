@@ -1,18 +1,25 @@
+
 name: Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   pull_request:
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build OEX + Calvin (Java/ART)
+    name: Build Calvin-only OEX APK
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,9 +32,14 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
 
-      - name: Install Android SDK components
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -35,22 +47,34 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Download Calvin NNUE and build debug APK
-        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+      - name: Build debug APK
+        run: |
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify APK exists and inspect packaged native libraries
-        shell: bash
+      - name: Verify APK exists
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          echo "APK size: $(stat -c%s "$APK") bytes"
-          if unzip -l "$APK" | grep -E 'lib/[^/]+/[^/]+\.so$'; then
-            echo "Unexpected native shared library found in APK"
+
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK was not generated."
             exit 1
           fi
-          echo "Verified: no native .so engine binaries are packaged."
 
-      - name: Upload debug APK
+          echo "APK successfully generated:"
+          ls -lh "$APK"
+
+      - name: Verify native libraries are excluded
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if unzip -l "$APK" | grep -E 'lib/[^/]+/[^/]+\.so$'; then
+            echo "::error::Native shared libraries were found in the APK."
+            exit 1
+          fi
+
+          echo "Verified: No native .so libraries are packaged."
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: oex-calvin-debug-apk
