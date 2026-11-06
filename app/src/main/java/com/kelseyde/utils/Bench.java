@@ -92,7 +92,7 @@ public class Bench {
             System.gc();
         }
 
-        long nps = (nodes / time) * 1000;
+        long nps = nodes > 0 && time > 0 ? (nodes * 1000L) / time : 0L;
         UCI.setOutputEnabled(true);
 
         if (print)
