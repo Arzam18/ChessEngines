@@ -10,16 +10,24 @@ package com.kelseyde.calvin.evaluation;
 public final class CalvinNeon {
 
     private static final boolean AVAILABLE;
+    private static final String LOAD_FAILURE;
 
     static {
-        boolean loaded;
+        boolean loaded = false;
+        String failure = "";
+        String explicitPath = System.getProperty("calvin.neon.path", "").trim();
         try {
-            System.loadLibrary("calvinneon");
+            if (!explicitPath.isEmpty()) {
+                System.load(explicitPath);
+            } else {
+                System.loadLibrary("calvinneon");
+            }
             loaded = true;
         } catch (UnsatisfiedLinkError | SecurityException error) {
-            loaded = false;
+            failure = error.getClass().getSimpleName() + ": " + error.getMessage();
         }
         AVAILABLE = loaded;
+        LOAD_FAILURE = failure;
     }
 
     private CalvinNeon() { }
@@ -29,7 +37,7 @@ public final class CalvinNeon {
     }
 
     public static String backendName() {
-        return AVAILABLE ? "ARM64 NEON" : "Java scalar fallback";
+        return AVAILABLE ? "ARM64 NEON" : "Java scalar fallback (" + LOAD_FAILURE + ")";
     }
 
     /**

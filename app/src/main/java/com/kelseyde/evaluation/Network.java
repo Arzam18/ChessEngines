@@ -8,7 +8,9 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ByteArrayOutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.io.FilterInputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
@@ -97,34 +99,83 @@ public record Network(int inputSize,
             return loadNetwork();
         }
 
+        private InputStream openNetworkStream(String location) throws IOException {
+            if (location.startsWith("apkzip:")) {
+                String archiveSpec = location.substring("apkzip:".length());
+                int separator = archiveSpec.indexOf("!/");
+                if (separator <= 0 || separator + 2 >= archiveSpec.length()) {
+                    throw new IOException("Invalid APK network location: " + location);
+                }
+                File apkFile = new File(archiveSpec.substring(0, separator));
+                String entryName = archiveSpec.substring(separator + 2);
+                ZipFile zip = new ZipFile(apkFile);
+                ZipEntry entry = zip.getEntry(entryName);
+                if (entry == null || entry.isDirectory()) {
+                    zip.close();
+                    throw new FileNotFoundException("NNUE asset " + entryName
+                            + " not found in " + apkFile);
+                }
+                InputStream entryStream;
+                try {
+                    entryStream = zip.getInputStream(entry);
+                } catch (IOException error) {
+                    zip.close();
+                    throw error;
+                }
+                return new FilterInputStream(entryStream) {
+                    @Override
+                    public void close() throws IOException {
+                        IOException failure = null;
+                        try {
+                            super.close();
+                        } catch (IOException error) {
+                            failure = error;
+                        }
+                        try {
+                            zip.close();
+                        } catch (IOException error) {
+                            if (failure == null) failure = error;
+                            else failure.addSuppressed(error);
+                        }
+                        if (failure != null) throw failure;
+                    }
+                };
+            }
+
+            File networkFile = new File(location);
+            if (networkFile.isAbsolute() || networkFile.isFile()) {
+                return new FileInputStream(networkFile);
+            }
+            InputStream resource = Network.class.getClassLoader().getResourceAsStream(location);
+            if (resource == null) {
+                throw new FileNotFoundException("NNUE file not found: " + location);
+            }
+            return resource;
+        }
+
         public Network loadNetwork() {
             try {
-                InputStream inputStream;
-                File networkFile = new File(file);
-                if (networkFile.isAbsolute() || networkFile.isFile()) {
-                    inputStream = new FileInputStream(networkFile);
-                } else {
-                    inputStream = Network.class.getClassLoader().getResourceAsStream(file);
-                }
-                if (inputStream == null) {
-                    throw new FileNotFoundException("NNUE file not found: " + file);
-                }
-
-                byte[] fileBytes;
-                try (InputStream source = inputStream; ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
-                    byte[] chunk = new byte[16 * 1024];
-                    int read;
-                    while ((read = source.read(chunk)) != -1) {
-                        bytes.write(chunk, 0, read);
-                    }
-                    fileBytes = bytes.toByteArray();
-                }
                 int buckets = bucketCount();
                 long expectedBytes = ((long) inputSize * hiddenSize * buckets
                         + hiddenSize + (long) hiddenSize * 2L + 1L) * 2L;
-                if (fileBytes.length != expectedBytes) {
-                    throw new IOException("Invalid NNUE size: expected " + expectedBytes
-                            + " bytes but found " + fileBytes.length);
+                if (expectedBytes <= 0L || expectedBytes > Integer.MAX_VALUE) {
+                    throw new IOException("Invalid NNUE payload size: " + expectedBytes);
+                }
+
+                byte[] fileBytes = new byte[(int) expectedBytes];
+                try (InputStream source = openNetworkStream(file)) {
+                    int offset = 0;
+                    while (offset < fileBytes.length) {
+                        int read = source.read(fileBytes, offset, fileBytes.length - offset);
+                        if (read < 0) {
+                            throw new IOException("Invalid NNUE size: expected at least "
+                                    + expectedBytes + " bytes but found " + offset);
+                        }
+                        if (read == 0) continue;
+                        offset += read;
+                    }
+                    // A few upstream network downloads contain harmless trailing
+                    // metadata/padding. Only the exact tensor payload is consumed.
                 }
                 ByteBuffer buffer = ByteBuffer.wrap(fileBytes).order(ByteOrder.LITTLE_ENDIAN);
 
