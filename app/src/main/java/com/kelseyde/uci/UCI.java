@@ -84,6 +84,7 @@ public class UCI {
     public static void handleUCI(UCICommand command) {
         write("id name Calvin 6.1.1");
         write("id author Dan Kelsey");
+        write("info string Runtime: standalone ART process");
         write("info string NNUE backend: " + CalvinNeon.backendName());
         EngineConfig config = ENGINE.getConfig();
         write(String.format("option name Hash type spin default %s min %s max %s",
@@ -106,6 +107,10 @@ public class UCI {
     }
 
     public static void handleBench(UCICommand command) {
+        write("info string ART warm-up benchmark: two discarded passes, third pass measured");
+        write("info string NNUE backend: " + CalvinNeon.backendName());
+        Bench.run(ENGINE, false, false);
+        Bench.run(ENGINE, false, false);
         Bench.run(ENGINE, false, true);
     }
 
@@ -299,7 +304,8 @@ public class UCI {
         if (Options.pretty) {
             Pretty.printEngineInfo();
         } else {
-            write("Calvin by Dan Kelsey");
+            // Keep standard output UCI-clean when launched by a chess GUI.
+            write("info string Calvin by Dan Kelsey");
         }
 
     }
