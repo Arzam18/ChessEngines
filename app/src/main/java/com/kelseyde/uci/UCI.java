@@ -81,7 +81,7 @@ public class UCI {
     }
 
     public static void handleUCI(UCICommand command) {
-        write("id name Calvin");
+        write("id name Calvin 6.1.1");
         write("id author Dan Kelsey");
         EngineConfig config = ENGINE.getConfig();
         write(String.format("option name Hash type spin default %s min %s max %s",
