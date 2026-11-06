@@ -1,29 +1,35 @@
-# OEX + Calvin Java Engine (Option A)
+# Calvin 6.1.1 — Android OEX integration
 
-This project integrates Calvin's Java source directly into the OEX Android application. Calvin runs inside the app's Android ART process and is **not** represented as an ELF executable or advertised in OEX's `enginelist.xml`.
+This repository packages Calvin as an Android Open Exchange (OEX) UCI engine for compatible chess GUIs such as DroidFish.
 
-The integration adds an exported Binder/Messenger service carrying ordinary UCI command and output lines. This keeps the engine independent of DroidFish, but a chess GUI must implement the included service contract (or adapt `CalvinEngineServiceClient.java`). Existing GUIs that only understand OEX's traditional executable-provider format cannot use this Java engine without a GUI-side adapter.
+## Current architecture (Stage 3)
+
+- OEX registers `libcalvin.so` as the Calvin 6.1.1 engine.
+- `libcalvin.so` is a small ARM64 Android PIE executable, not a normal JNI shared library. The GUI launches it as the UCI child process.
+- OEX copies the selected executable into the GUI private engine directory. The launcher extracts its embedded DEX, NNUE weights and NEON JNI library beside itself, then starts `CalvinUciMain` through Android `app_process64`.
+- Calvin's chess search, board, move generation and UCI remain Java.
+- `libcalvinneon.so` is embedded inside `libcalvin.so`; it supplies JNI NNUE SCReLU and accumulator kernels.
+- The original NNUE network is embedded in the launcher and extracted into the GUI-owned runtime directory at engine startup.
+- The OEX Activity and provider service are not part of the UCI session lifetime.
+
+See [`docs/CALVIN_STAGE3_STANDALONE_LAUNCHER.md`](docs/CALVIN_STAGE3_STANDALONE_LAUNCHER.md) for the process model and Android compatibility caveats.
 
 ## Build
 
-Requirements: JDK 17, Android SDK platform 35, and Android Build Tools. The project keeps the original minSdk 19 and enables multidex plus core-library desugaring for the Java APIs used by Calvin. From this directory:
+Run the GitHub Actions workflow **Build Calvin OEX Standalone (ARM64)** manually. It uses JDK 17, Android SDK 35, and NDK 27.2.12479018, then builds `:app:assembleDebug`.
+
+The APK is intended to contain exactly one native payload: `lib/arm64-v8a/libcalvin.so`. This is the executable OEX launcher (PIE) and it embeds the standalone DEX, original NNUE network, and NNUE JNI accelerator.
+
+The original native chess-engine source/library directories in a user's fork are left in place but excluded from the generated APK through the isolated generated `jniLibs` source set.
+
+## Local checks
 
 ```bash
-./gradlew :app:assembleDebug
+python3 scripts/verify_calvin_standalone_launcher.py
+./scripts/test_network_zip_loader.sh
+cc -std=c11 -O2 -Wall -Wextra -Werror -fsyntax-only app/src/main/cpp/calvin_bridge.c
 ```
 
-Gradle downloads the official `calvin1024_8b.nnue` file during `preBuild`, checks its expected architecture-derived size, and packages it as an app asset. The NNUE is not stored in this source ZIP.
+## Runtime verification still required
 
-## Important
-
-- The supplied OEX source ZIP did not contain the referenced native engine `.so` binaries. The final build configuration also excludes `jniLibs` and all `**/*.so` packaging, and the OEX engine list is empty so it does not advertise missing native engines.
-- Calvin's desktop JDK Vector API calls were replaced with scalar Java compatibility code for Android ART. This is a portability baseline; NPS and numerical equivalence must be validated on a real Android device against the upstream desktop engine.
-- The Android APK could not be built in the current environment because the Android SDK is unavailable. The Calvin Java core and the Android service/client classes were compiled with `javac` (the Android classes against minimal API stubs); a UCI smoke test with a synthetic network returned `uciok`, `readyok`, and `bestmove`. This does not validate the official NNUE or an Android device build.
-
-See [`docs/CALVIN_ANDROID_INTEGRATION.md`](docs/CALVIN_ANDROID_INTEGRATION.md) for architecture, service protocol, and verification details.
-
-## GitHub Actions
-
-The repository includes `.github/workflows/android.yml`. Push to `main`/`master`, open a pull request, or run **Actions → Android APK → Run workflow**. The workflow installs JDK 17 and Android SDK 35, downloads the Calvin NNUE automatically through Gradle, builds `:app:assembleDebug`, verifies that no native `.so` libraries are packaged, and uploads `app-debug.apk` as the `oex-calvin-debug-apk` artifact.
-
-The NNUE file is downloaded during the build and must not be committed to the repository.
+The CI checks validate source wiring, C syntax, NNUE ZIP reading, and ARM64 ELF packaging. They cannot prove that a production Android build permits an ordinary app process to execute `app_process64` and load the extracted standalone DEX. That must be tested on the target phone. If SELinux/OEM policy blocks the bootstrap, the launcher approach must be replaced by a genuine native Calvin UCI port; the old provider-service relay is not a truly independent executable.

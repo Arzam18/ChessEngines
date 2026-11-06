@@ -1,23 +1,26 @@
-# OEX + Calvin Java Engine (Option A)
+# Calvin 6.1.1 — Standalone Android OEX engine
 
-This project integrates Calvin's Java source directly into the OEX Android application. Calvin runs inside the app's Android ART process and is **not** represented as an ELF executable or advertised in OEX's `enginelist.xml`.
+## Current Stage 3 design
 
-The integration adds an exported Binder/Messenger service carrying ordinary UCI command and output lines. This keeps the engine independent of DroidFish, but a chess GUI must implement the included service contract (or adapt `CalvinEngineServiceClient.java`). Existing GUIs that only understand OEX's traditional executable-provider format cannot use this Java engine without a GUI-side adapter.
+DroidFish resolves `libcalvin.so` through the OEX provider and copies it into its own private engine directory before launching it. The executable is therefore self-contained: its appended payload contains the merged standalone DEX, original Calvin NNUE weights and ARM64 NEON JNI library. The launcher extracts these beside itself, sets `CLASSPATH`, `CALVIN_NNUE_PATH` and `CALVIN_NEON_LIBRARY`, then starts `/system/bin/app_process64`.
 
-## Build
+The ART entrypoint configures the absolute NNUE and NEON paths before loading Calvin's UCI/Engine classes. The network loader consumes the exact tensor payload and ignores harmless trailing metadata while rejecting truncated files. If the JNI library cannot load, the engine reports the detailed failure and retains the scalar Java fallback. The OEX APK contains only `lib/arm64-v8a/libcalvin.so`; the NEON library is embedded in that executable and extracted at launch.
 
-Requirements: JDK 17, Android SDK platform 35, and Android Build Tools. The project keeps the original minSdk 19 and enables multidex plus core-library desugaring for the Java APIs used by Calvin. From this directory:
+## Performance diagnostics
 
-```bash
-./gradlew :app:assembleDebug
+Send `uci` and inspect:
+
+```text
+info string Runtime: standalone ART process
+info string NNUE backend: ARM64 NEON
 ```
 
-Gradle downloads the official `calvin1024_8b.nnue` file during `preBuild`, checks its expected architecture-derived size, and packages it as an app asset. The NNUE is not stored in this source ZIP.
+If the backend line reports `Java scalar fallback (...)`, do not treat the run as a NEON performance result. The `bench` UCI command now runs two discarded warm-up passes followed by one measured pass. It uses monotonic nanosecond timing. This improves the measurement but does not claim a speed increase without a phone-side result.
 
-## Important
+## Historical note
 
-- The supplied OEX source ZIP did not contain the referenced native engine `.so` binaries. The final build configuration also excludes `jniLibs` and all `**/*.so` packaging, and the OEX engine list is empty so it does not advertise missing native engines.
-- Calvin's desktop JDK Vector API calls were replaced with scalar Java compatibility code for Android ART. This is a portability baseline; NPS and numerical equivalence must be validated on a real Android device against the upstream desktop engine.
-- The Android APK could not be built in the current environment because the Android SDK is unavailable. The Calvin Java core and the Android service/client classes were compiled with `javac` (the Android classes against minimal API stubs); a UCI smoke test with a synthetic network returned `uciok`, `readyok`, and `bestmove`. This does not validate the official NNUE or an Android device build.
+Stage 1/2 used a native UCI-to-loopback relay and a provider-hosted Java foreground service. That design was superseded because the search process depended on the Chess Engines provider package staying active. The old service source files remain as historical reference only; they are no longer registered in the Manifest or called by the OEX provider.
 
-See [`docs/CALVIN_ANDROID_INTEGRATION.md`](docs/CALVIN_ANDROID_INTEGRATION.md) for architecture, service protocol, and verification details.
+## Compatibility caveat
+
+`app_process64` is a platform executable, not a public SDK process-launch API. Production SELinux policy or OEM customizations may prevent an ordinary GUI-owned app process from executing it or loading an APK as its class path. Build/host checks cannot verify that behavior. The Galaxy A16 must confirm that OEX can execute the copied PIE, that app_process can load the extracted DEX, and that DroidFish can complete `uci`, `isready`, `position`, `go`, `stop`, and `quit` after the Chess Engines provider app is closed. If this bootstrap is blocked, a true independent solution requires porting Calvin's search to native code.
