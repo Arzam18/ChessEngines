@@ -13,7 +13,7 @@ public record SearchResult(int eval, Move move, int depth, int seldepth, long ti
 
     public static SearchResult of(ThreadData td, SearchLimits limits) {
         long millis = limits.start() != null ? Duration.between(limits.start(), Instant.now()).toMillis() : 0;
-        long nps = td.nodes > 0 && millis > 0 ? ((td.nodes / millis) * 1000) : 0;
+        long nps = td.nodes > 0 && millis > 0 ? ((long) td.nodes * 1000L) / millis : 0L;
         return new SearchResult(td.bestScore(), td.bestMove(), td.depth, td.seldepth, millis, td.nodes, nps);
     }
 
