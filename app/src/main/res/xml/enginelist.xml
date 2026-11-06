@@ -2,6 +2,6 @@
 <enginelist>
     <engine
         name="Calvin 6.1.1"
-        filename="libcalvinbridge.so"
+        filename="libcalvin.so"
         target="arm64-v8a" />
 </enginelist>
