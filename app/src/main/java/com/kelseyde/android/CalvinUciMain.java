@@ -5,6 +5,8 @@ import com.kelseyde.calvin.uci.UCI;
 import java.io.File;
 
 /**
+ * Required standalone ART entrypoint, embedded into libcalvin.so by the D8 build.
+ * This source file must be committed at this exact path for the launcher verifier.
  * Standalone ART entrypoint launched by libcalvin.so through app_process.
  * The OEX GUI copies and launches the executable in its own engine directory;
  * the launcher extracts this runtime's DEX, NNUE weights, and NEON JNI library
