@@ -38,31 +38,48 @@ jobs:
             "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
+      - name: Test NNUE kernel arithmetic
+        shell: bash
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror \
+            app/src/test/cpp/calvin_neon_kernel_test.c \
+            -o /tmp/calvin-neon-kernel-test
+          /tmp/calvin-neon-kernel-test
+
       - name: Build Calvin OEX APK
         shell: bash
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify OEX executable packaging
+      - name: Verify OEX bridge and NEON library packaging
         shell: bash
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
-          mapfile -t NATIVE_LIBS < <(unzip -Z1 "$APK" | grep -E '^lib/[^/]+/[^/]+\.so$' || true)
+          mapfile -t NATIVE_LIBS < <(unzip -Z1 "$APK" | grep -E '^lib/[^/]+/[^/]+\.so$' | sort || true)
           printf 'Native payloads in APK:\n'
           printf '  %s\n' "${NATIVE_LIBS[@]}"
-          if [[ "${#NATIVE_LIBS[@]}" -ne 1 || "${NATIVE_LIBS[0]}" != "lib/arm64-v8a/libcalvinbridge.so" ]]; then
-            echo "ERROR: APK must contain only the ARM64 Calvin bridge executable."
+          if [[ "${#NATIVE_LIBS[@]}" -ne 2 \
+              || "${NATIVE_LIBS[0]}" != "lib/arm64-v8a/libcalvinbridge.so" \
+              || "${NATIVE_LIBS[1]}" != "lib/arm64-v8a/libcalvinneon.so" ]]; then
+            echo "ERROR: APK must contain only the ARM64 OEX bridge and Calvin NEON library."
             exit 1
           fi
           unzip -p "$APK" lib/arm64-v8a/libcalvinbridge.so > /tmp/libcalvinbridge.so
+          unzip -p "$APK" lib/arm64-v8a/libcalvinneon.so > /tmp/libcalvinneon.so
           READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           "$READELF" -h /tmp/libcalvinbridge.so | tee /tmp/bridge-elf-header.txt
+          "$READELF" -h /tmp/libcalvinneon.so | tee /tmp/neon-elf-header.txt
           grep -q 'AArch64' /tmp/bridge-elf-header.txt
           grep -q 'DYN' /tmp/bridge-elf-header.txt
+          grep -q 'AArch64' /tmp/neon-elf-header.txt
+          grep -q 'DYN' /tmp/neon-elf-header.txt
           "$READELF" -l /tmp/libcalvinbridge.so | grep -q '/system/bin/linker64'
-          echo "Verified: ARM64 PIE bridge only; original native chess-engine libraries are not packaged."
+          "$READELF" -Ws /tmp/libcalvinneon.so | grep -q 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_screluForwardNative'
+          "$READELF" -Ws /tmp/libcalvinneon.so | grep -q 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateFeaturesNative'
+          "$READELF" -Ws /tmp/libcalvinneon.so | grep -q 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateBothFromPreviousNative'
+          echo "Verified: ARM64 bridge plus JNI NEON acceleration only; original native chess-engine libraries are not packaged."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
