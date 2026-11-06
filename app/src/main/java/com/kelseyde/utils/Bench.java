@@ -80,19 +80,20 @@ public class Bench {
         Search search = engine.getSearcher();
         search.setThreadCount(1);
         long nodes = 0;
-        long time = 0;
+        long timeNanos = 0;
 
         for (String fen : FENS) {
             search.clearHistory();
             search.setPosition(FEN.parse(fen).toBoard());
-            Instant now = Instant.now();
+            long started = System.nanoTime();
             SearchResult result = search.search(tc);
+            timeNanos += System.nanoTime() - started;
             nodes += result.nodes();
-            time += Duration.between(now, Instant.now()).toMillis();
             System.gc();
         }
 
-        long nps = nodes > 0 && time > 0 ? (nodes * 1000L) / time : 0L;
+        long nps = nodes > 0 && timeNanos > 0
+                ? (long) (((double) nodes * 1_000_000_000.0) / timeNanos) : 0L;
         UCI.setOutputEnabled(true);
 
         if (print)
