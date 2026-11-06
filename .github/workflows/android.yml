@@ -1,11 +1,8 @@
 name: Build Calvin OEX Standalone (ARM64)
 
+# Manual-only build: commits and pull requests do not consume runner time.
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
 
 permissions:
   contents: read
@@ -45,7 +42,7 @@ jobs:
         run: cc -std=c11 -O2 -Wall -Wextra -Werror -fsyntax-only app/src/main/cpp/calvin_bridge.c
 
       - name: Test APK ZIP NNUE loader and trailing-byte handling
-        run: ./scripts/test_network_zip_loader.sh
+        run: bash ./scripts/test_network_zip_loader.sh
 
       - name: Test NNUE kernel arithmetic
         shell: bash
