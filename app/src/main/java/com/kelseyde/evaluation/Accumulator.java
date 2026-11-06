@@ -8,7 +8,7 @@ import com.kelseyde.calvin.board.Colour;
  * from both white's and black's perspective, so that during evaluation the 'side to move' and 'not side to move' can be
  * easily flipped.
  * </p>
- * The Android-compatible scalar implementation preserves the original signed 16-bit accumulator arithmetic.
+ * Android uses ARM64 NEON kernels when available and retains the scalar Java path as fallback.
  */
 public class Accumulator {
 
@@ -31,6 +31,11 @@ public class Accumulator {
         boolean mirror = mirrored[Colour.index(whitePerspective)];
         int offset = feature.index(whitePerspective, mirror) * HIDDEN_SIZE;
         short[] features = whitePerspective ? whiteFeatures : blackFeatures;
+        if (CalvinNeon.isAvailable()) {
+            CalvinNeon.updateFeaturesNative(features, weights, HIDDEN_SIZE,
+                    offset, -1, -1, -1, -1, -1, -1, -1, 1, 0);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
@@ -46,6 +51,11 @@ public class Accumulator {
         boolean mirror = mirrored[Colour.index(whitePerspective)];
         int offset = feature.index(whitePerspective, mirror) * HIDDEN_SIZE;
         short[] features = whitePerspective ? whiteFeatures : blackFeatures;
+        if (CalvinNeon.isAvailable()) {
+            CalvinNeon.updateFeaturesNative(features, weights, HIDDEN_SIZE,
+                    -1, -1, -1, -1, offset, -1, -1, -1, 0, 1);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
@@ -64,6 +74,11 @@ public class Accumulator {
         int offset3 = feat3.index(whitePerspective, mirror) * HIDDEN_SIZE;
         int offset4 = feat4.index(whitePerspective, mirror) * HIDDEN_SIZE;
         short[] features = whitePerspective ? whiteFeatures : blackFeatures;
+        if (CalvinNeon.isAvailable()) {
+            CalvinNeon.updateFeaturesNative(features, weights, HIDDEN_SIZE,
+                    offset1, offset2, offset3, offset4, -1, -1, -1, -1, 4, 0);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
@@ -85,6 +100,11 @@ public class Accumulator {
         int offset3 = feat3.index(whitePerspective, mirror) * HIDDEN_SIZE;
         int offset4 = feat4.index(whitePerspective, mirror) * HIDDEN_SIZE;
         short[] features = whitePerspective ? whiteFeatures : blackFeatures;
+        if (CalvinNeon.isAvailable()) {
+            CalvinNeon.updateFeaturesNative(features, weights, HIDDEN_SIZE,
+                    -1, -1, -1, -1, offset1, offset2, offset3, offset4, 0, 4);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
@@ -108,6 +128,25 @@ public class Accumulator {
         }
     }
 
+    private void updateBothFromPrevious(Accumulator prev,
+                                        short[] whiteWeights,
+                                        short[] blackWeights,
+                                        int whiteAdd0, int whiteAdd1,
+                                        int whiteSub0, int whiteSub1,
+                                        int blackAdd0, int blackAdd1,
+                                        int blackSub0, int blackSub1,
+                                        int addCount, int subCount) {
+        CalvinNeon.updateBothFromPreviousNative(
+                prev.whiteFeatures, whiteFeatures, whiteWeights,
+                prev.blackFeatures, blackFeatures, blackWeights,
+                HIDDEN_SIZE,
+                whiteAdd0, whiteAdd1, -1, -1,
+                whiteSub0, whiteSub1, -1, -1,
+                blackAdd0, blackAdd1, -1, -1,
+                blackSub0, blackSub1, -1, -1,
+                addCount, subCount);
+    }
+
     public void add(Accumulator prev, AccumulatorUpdate update, short[] whiteWeights, short[] blackWeights) {
 
         Feature add1 = update.adds[0];
@@ -117,6 +156,12 @@ public class Accumulator {
 
         int wOffset = add1.index(true, whiteMirror) * HIDDEN_SIZE;
         int bOffset = add1.index(false, blackMirror) * HIDDEN_SIZE;
+
+        if (CalvinNeon.isAvailable()) {
+            updateBothFromPrevious(prev, whiteWeights, blackWeights,
+                    wOffset, -1, -1, -1, bOffset, -1, -1, -1, 1, 0);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
@@ -143,6 +188,13 @@ public class Accumulator {
         int bOffset1 = add1.index(false, blackMirror) * HIDDEN_SIZE;
         int wOffset2 = sub1.index(true, whiteMirror) * HIDDEN_SIZE;
         int bOffset2 = sub1.index(false, blackMirror) * HIDDEN_SIZE;
+
+        if (CalvinNeon.isAvailable()) {
+            updateBothFromPrevious(prev, whiteWeights, blackWeights,
+                    wOffset1, -1, wOffset2, -1,
+                    bOffset1, -1, bOffset2, -1, 1, 1);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
@@ -174,6 +226,13 @@ public class Accumulator {
         int bOffset2 = sub1.index(false, blackMirror) * HIDDEN_SIZE;
         int wOffset3 = sub2.index(true, whiteMirror) * HIDDEN_SIZE;
         int bOffset3 = sub2.index(false, blackMirror) * HIDDEN_SIZE;
+
+        if (CalvinNeon.isAvailable()) {
+            updateBothFromPrevious(prev, whiteWeights, blackWeights,
+                    wOffset1, -1, wOffset2, wOffset3,
+                    bOffset1, -1, bOffset2, bOffset3, 1, 2);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
@@ -210,6 +269,13 @@ public class Accumulator {
         int bOffset3 = sub1.index(false, blackMirror) * HIDDEN_SIZE;
         int wOffset4 = sub2.index(true, whiteMirror) * HIDDEN_SIZE;
         int bOffset4 = sub2.index(false, blackMirror) * HIDDEN_SIZE;
+
+        if (CalvinNeon.isAvailable()) {
+            updateBothFromPrevious(prev, whiteWeights, blackWeights,
+                    wOffset1, wOffset2, wOffset3, wOffset4,
+                    bOffset1, bOffset2, bOffset3, bOffset4, 2, 2);
+            return;
+        }
 
         for (int i = 0; i < LOOP_LENGTH; i++) {
 
