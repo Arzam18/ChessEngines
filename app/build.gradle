@@ -8,12 +8,15 @@ final String calvinNetworkName = 'calvin1024_8b.nnue'
 final String calvinNetworkUrl = 'https://raw.githubusercontent.com/kelseyde/calvin-chess-engine/main/src/main/resources/calvin1024_8b.nnue'
 // Required NNUE tensor payload: 8 buckets * (768 * 1024 input weights)
 // + 1024 input biases + 2048 output weights + 1 output bias, all int16.
-// The upstream file may contain additional trailing bytes, so this is a
-// minimum payload size, not an exact file-size requirement.
+// The upstream asset may contain additional trailing bytes.
 final long calvinNetworkPayloadBytes = (8L * 768L * 1024L + 1024L + 2048L + 1L) * 2L
+final String calvinNdkVersion = '27.2.12479018'
 
 def calvinAssetsDir = layout.buildDirectory.dir('generated/calvinAssets')
 def calvinNetworkFile = calvinAssetsDir.map { it.file(calvinNetworkName) }
+def calvinBridgeJniDir = layout.buildDirectory.dir('generated/calvinBridgeJniLibs')
+def calvinBridgeBinary = calvinBridgeJniDir.map { it.file('arm64-v8a/libcalvinbridge.so') }
+def calvinBridgeSource = file('src/main/cpp/calvin_bridge.c')
 
 tasks.register('downloadCalvinNetwork') {
     group = 'build setup'
@@ -61,7 +64,7 @@ tasks.register('downloadCalvinNetwork') {
         if (downloadedBytes > calvinNetworkPayloadBytes) {
             logger.lifecycle(
                 "Calvin NNUE contains ${downloadedBytes - calvinNetworkPayloadBytes} " +
-                'additional trailing bytes; retaining the complete upstream file.'
+                'additional trailing bytes; the runtime will use the required tensor payload.'
             )
         }
 
@@ -71,30 +74,79 @@ tasks.register('downloadCalvinNetwork') {
         }
         if (!temporary.renameTo(target)) {
             temporary.delete()
-            throw new GradleException("Cannot move downloaded Calvin NNUE into generated assets: ${target}")
+            throw new GradleException("Cannot move generated NNUE file into assets: ${target}")
+        }
+        logger.lifecycle("Downloaded Calvin NNUE (${target.length()} bytes)")
+    }
+}
+
+/**
+ * Build one ARM64 Android PIE executable. It is deliberately emitted into a
+ * generated jniLibs directory, separate from the original OEX native engines.
+ */
+tasks.register('buildCalvinBridge', Exec) {
+    group = 'build setup'
+    description = 'Builds the tiny ARM64 UCI relay executable used by the OEX provider.'
+    inputs.file(calvinBridgeSource)
+    outputs.file(calvinBridgeBinary)
+
+    doFirst {
+        String sdkRoot = System.getenv('ANDROID_SDK_ROOT') ?: System.getenv('ANDROID_HOME')
+        if (sdkRoot == null || sdkRoot.trim().isEmpty()) {
+            throw new GradleException('ANDROID_SDK_ROOT/ANDROID_HOME is not set; install the Android SDK and NDK.')
+        }
+        String ndkRoot = System.getenv('ANDROID_NDK_HOME')
+        if (ndkRoot == null || ndkRoot.trim().isEmpty()) {
+            ndkRoot = new File(sdkRoot, "ndk/${calvinNdkVersion}").absolutePath
         }
 
-        logger.lifecycle("Downloaded Calvin NNUE (${target.length()} bytes)")
+        String hostTag = 'linux-x86_64'
+        String osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+        if (osName.contains('win')) hostTag = 'windows-x86_64'
+        else if (osName.contains('mac')) hostTag = 'darwin-x86_64'
+
+        String compilerName = osName.contains('win')
+            ? 'aarch64-linux-android21-clang.cmd'
+            : 'aarch64-linux-android21-clang'
+        File compiler = new File(ndkRoot,
+            "toolchains/llvm/prebuilt/${hostTag}/bin/${compilerName}")
+        if (!compiler.isFile()) {
+            throw new GradleException("Android NDK compiler not found: ${compiler}. " +
+                "Install NDK ${calvinNdkVersion} or set ANDROID_NDK_HOME.")
+        }
+
+        File output = calvinBridgeBinary.get().asFile
+        output.parentFile.mkdirs()
+        commandLine compiler.absolutePath,
+            '-std=c11', '-O2', '-fPIE', '-pie',
+            '-Wl,--build-id=none',
+            '-Wl,-z,relro,-z,now',
+            '-Wl,-z,max-page-size=16384',
+            '-Wl,-z,common-page-size=16384',
+            calvinBridgeSource.absolutePath,
+            '-o', output.absolutePath
     }
 }
 
 android {
     namespace 'ccc.chess.engines'
     compileSdk 35
+    ndkVersion calvinNdkVersion
 
     defaultConfig {
         applicationId 'ccc.chess.engines'
-        minSdk 19
+        // ARM64 Android devices have API level 21 or newer.
+        minSdk 21
         targetSdk 29
-        versionCode 21
-        versionName '2.7-calvin'
-        // Required by Android core-library desugaring when minSdk <= 20.
+        versionCode 23
+        versionName '2.8.1-calvin-oex'
         multiDexEnabled true
     }
 
     buildFeatures {
         buildConfig true
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -104,17 +156,20 @@ android {
     sourceSets {
         main {
             assets.srcDir(calvinAssetsDir)
-            // Do not package the source OEX native engine executables in this Java-engine build.
-            jniLibs.setSrcDirs([])
+            // Only the generated bridge is considered for packaging. Existing
+            // root/native engine folders remain untouched and are bypassed.
+            jniLibs.setSrcDirs([calvinBridgeJniDir])
         }
     }
 
     androidResources {
         noCompress += ['nnue']
     }
+
     packaging {
         jniLibs {
-            excludes += ['**/*.so']
+            // OEX opens the executable from ApplicationInfo.nativeLibraryDir.
+            useLegacyPackaging = true
         }
     }
 
@@ -127,6 +182,7 @@ android {
 
 tasks.named('preBuild').configure {
     dependsOn(tasks.named('downloadCalvinNetwork'))
+    dependsOn(tasks.named('buildCalvinBridge'))
 }
 
 dependencies {
