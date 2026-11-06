@@ -12,8 +12,11 @@ public record SearchResult(int eval, Move move, int depth, int seldepth, long ti
     }
 
     public static SearchResult of(ThreadData td, SearchLimits limits) {
-        long millis = limits.start() != null ? Duration.between(limits.start(), Instant.now()).toMillis() : 0;
-        long nps = td.nodes > 0 && millis > 0 ? ((long) td.nodes * 1000L) / millis : 0L;
+        long elapsedNanos = limits.start() != null
+                ? Duration.between(limits.start(), Instant.now()).toNanos() : 0L;
+        long millis = elapsedNanos > 0L ? elapsedNanos / 1_000_000L : 0L;
+        long nps = td.nodes > 0 && elapsedNanos > 0L
+                ? (long) (((double) td.nodes * 1_000_000_000.0) / elapsedNanos) : 0L;
         return new SearchResult(td.bestScore(), td.bestMove(), td.depth, td.seldepth, millis, td.nodes, nps);
     }
 
