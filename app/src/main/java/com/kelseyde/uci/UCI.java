@@ -3,6 +3,7 @@ package com.kelseyde.calvin.uci;
 import com.kelseyde.calvin.board.Bits;
 import com.kelseyde.calvin.board.Move;
 import com.kelseyde.calvin.engine.Engine;
+import com.kelseyde.calvin.evaluation.CalvinNeon;
 import com.kelseyde.calvin.engine.EngineConfig;
 import com.kelseyde.calvin.engine.Tunable;
 import com.kelseyde.calvin.evaluation.NNUE;
@@ -83,6 +84,7 @@ public class UCI {
     public static void handleUCI(UCICommand command) {
         write("id name Calvin 6.1.1");
         write("id author Dan Kelsey");
+        write("info string NNUE backend: " + CalvinNeon.backendName());
         EngineConfig config = ENGINE.getConfig();
         write(String.format("option name Hash type spin default %s min %s max %s",
                 config.hashConfig.defaultSizeMb, config.hashConfig.minSizeMb, config.hashConfig.maxSizeMb));
