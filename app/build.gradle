@@ -14,15 +14,19 @@ final String calvinNdkVersion = '27.2.12479018'
 
 def calvinAssetsDir = layout.buildDirectory.dir('generated/calvinAssets')
 def calvinNetworkFile = calvinAssetsDir.map { it.file(calvinNetworkName) }
-def calvinBridgeJniDir = layout.buildDirectory.dir('generated/calvinBridgeJniLibs')
-def calvinBridgeBinary = calvinBridgeJniDir.map { it.file('arm64-v8a/libcalvinbridge.so') }
-def calvinBridgeSource = file('src/main/cpp/calvin_bridge.c')
-def calvinNeonBinary = calvinBridgeJniDir.map { it.file('arm64-v8a/libcalvinneon.so') }
+def calvinOexJniDir = layout.buildDirectory.dir('generated/calvinOexJniLibs')
+def calvinLauncherBinary = calvinOexJniDir.map { it.file('arm64-v8a/libcalvin.so') }
+def calvinLauncherRawBinary = layout.buildDirectory.file('generated/calvinLauncher/calvin-launcher.raw')
+def calvinLauncherSource = file('src/main/cpp/calvin_bridge.c')
+def calvinNeonBinary = layout.buildDirectory.file('generated/calvinRuntime/libcalvinneon.so')
 def calvinNeonSource = file('src/main/cpp/calvin_neon.c')
+def calvinEmbeddedDexDir = layout.buildDirectory.dir('generated/calvinRuntime/dex')
+def calvinProjectDexDir = layout.buildDirectory.dir('intermediates/dex/debug/mergeProjectDexDebug')
+def calvinExternalDexDir = layout.buildDirectory.dir('intermediates/dex/debug/mergeExtDexDebug')
 
 tasks.register('downloadCalvinNetwork') {
     group = 'build setup'
-    description = 'Downloads the official Calvin NNUE network into generated Android assets.'
+    description = 'Downloads the official Calvin NNUE network as a standalone runtime payload input.'
     outputs.file(calvinNetworkFile)
     outputs.upToDateWhen {
         File file = calvinNetworkFile.get().asFile
@@ -83,14 +87,14 @@ tasks.register('downloadCalvinNetwork') {
 }
 
 /**
- * Build one ARM64 Android PIE executable. It is deliberately emitted into a
- * generated jniLibs directory, separate from the original OEX native engines.
+ * Build the standalone ARM64 Android PIE launcher. OEX executes it as the
+ * engine process; it then starts ART and Calvin Java in the same child process.
  */
-tasks.register('buildCalvinBridge', Exec) {
+tasks.register('buildCalvinLauncher', Exec) {
     group = 'build setup'
-    description = 'Builds the tiny ARM64 UCI relay executable used by the OEX provider.'
-    inputs.file(calvinBridgeSource)
-    outputs.file(calvinBridgeBinary)
+    description = 'Builds the standalone ARM64 OEX executable that bootstraps Calvin Java through ART.'
+    inputs.file(calvinLauncherSource)
+    outputs.file(calvinLauncherRawBinary)
 
     doFirst {
         String sdkRoot = System.getenv('ANDROID_SDK_ROOT') ?: System.getenv('ANDROID_HOME')
@@ -117,7 +121,7 @@ tasks.register('buildCalvinBridge', Exec) {
                 "Install NDK ${calvinNdkVersion} or set ANDROID_NDK_HOME.")
         }
 
-        File output = calvinBridgeBinary.get().asFile
+        File output = calvinLauncherRawBinary.get().asFile
         output.parentFile.mkdirs()
         commandLine compiler.absolutePath,
             '-std=c11', '-O2', '-fPIE', '-pie',
@@ -125,7 +129,7 @@ tasks.register('buildCalvinBridge', Exec) {
             '-Wl,-z,relro,-z,now',
             '-Wl,-z,max-page-size=16384',
             '-Wl,-z,common-page-size=16384',
-            calvinBridgeSource.absolutePath,
+            calvinLauncherSource.absolutePath,
             '-o', output.absolutePath
     }
 }
@@ -179,6 +183,106 @@ tasks.register('buildCalvinNeon', Exec) {
     }
 }
 
+
+/**
+ * OEX GUIs copy only the registered engine executable into their own private
+ * engine directory. Embed a self-contained ART runtime into the executable so
+ * it does not need to find or access the provider APK after that copy.
+ *
+ * AGP first dexes project classes and core-library-desugaring classes. D8 then
+ * merges those DEX inputs into one standalone classes.dex. The launcher appends
+ * that DEX, the exact NNUE asset and the NEON JNI library to its PIE file.
+ */
+tasks.register('embedCalvinRuntime') {
+    group = 'build setup'
+    description = 'Embeds Calvin DEX, NNUE and NEON runtime into the OEX executable.'
+    dependsOn(tasks.named('buildCalvinLauncher'))
+    dependsOn(tasks.named('buildCalvinNeon'))
+    dependsOn(tasks.named('downloadCalvinNetwork'))
+    dependsOn(tasks.matching { it.name == 'mergeProjectDexDebug' })
+    dependsOn(tasks.matching { it.name == 'mergeExtDexDebug' })
+    inputs.file(calvinLauncherRawBinary)
+    inputs.file(calvinNetworkFile)
+    inputs.file(calvinNeonBinary)
+    inputs.dir(calvinProjectDexDir)
+    inputs.dir(calvinExternalDexDir)
+    outputs.file(calvinLauncherBinary)
+
+    doLast {
+        File sdkRootFile = new File(System.getenv('ANDROID_SDK_ROOT') ?: System.getenv('ANDROID_HOME') ?: '')
+        if (!sdkRootFile.isDirectory()) {
+            throw new GradleException('ANDROID_SDK_ROOT/ANDROID_HOME is not set.')
+        }
+        File d8 = new File(sdkRootFile, 'build-tools/35.0.0/d8')
+        if (!d8.isFile()) {
+            throw new GradleException("D8 not found: ${d8}. Install Android Build Tools 35.0.0.")
+        }
+
+        List<File> dexInputs = []
+        [calvinProjectDexDir.get().asFile, calvinExternalDexDir.get().asFile].each { directory ->
+            if (directory.isDirectory()) {
+                dexInputs.addAll(fileTree(directory).matching { include '**/*.dex' }.files)
+            }
+        }
+        dexInputs = dexInputs.unique { it.canonicalPath }.sort { it.canonicalPath }
+        if (dexInputs.isEmpty()) {
+            throw new GradleException('AGP project/external DEX outputs are missing; cannot create standalone Calvin runtime.')
+        }
+
+        File dexOutputDir = calvinEmbeddedDexDir.get().asFile
+        delete(dexOutputDir)
+        dexOutputDir.mkdirs()
+        File androidJar = new File(sdkRootFile, 'platforms/android-35/android.jar')
+        if (!androidJar.isFile()) {
+            throw new GradleException("Android platform API jar not found: ${androidJar}. Install platforms;android-35.")
+        }
+        logger.lifecycle("Merging ${dexInputs.size()} AGP DEX input(s) into the standalone Calvin runtime")
+        project.exec {
+            commandLine([d8.absolutePath, '--release', '--min-api', '21',
+                         '--lib', androidJar.absolutePath,
+                         '--output', dexOutputDir.absolutePath] + dexInputs.collect { it.absolutePath })
+        }
+        List<File> mergedDexFiles = fileTree(dexOutputDir).matching { include '**/*.dex' }.files.toList()
+        if (mergedDexFiles.size() != 1 || mergedDexFiles[0].name != 'classes.dex') {
+            throw new GradleException("Expected one standalone DEX file, found: ${mergedDexFiles*.name}. " +
+                'Review D8 multidex output before packaging; it must not silently omit Calvin classes.')
+        }
+
+        File rawLauncher = calvinLauncherRawBinary.get().asFile
+        File network = calvinNetworkFile.get().asFile
+        File neon = calvinNeonBinary.get().asFile
+        File finalLauncher = calvinLauncherBinary.get().asFile
+        [rawLauncher, network, neon, mergedDexFiles[0]].each { input ->
+            if (!input.isFile() || input.length() <= 0L) {
+                throw new GradleException("Missing/empty Calvin runtime component: ${input}")
+            }
+        }
+        if (network.length() < calvinNetworkPayloadBytes) {
+            throw new GradleException("Calvin NNUE payload is truncated: ${network.length()} bytes")
+        }
+
+        finalLauncher.parentFile.mkdirs()
+        if (finalLauncher.exists() && !finalLauncher.delete()) {
+            throw new GradleException("Cannot replace final OEX launcher: ${finalLauncher}")
+        }
+        finalLauncher.withOutputStream { output ->
+            rawLauncher.withInputStream { input -> input.transferTo(output) }
+            mergedDexFiles[0].withInputStream { input -> input.transferTo(output) }
+            network.withInputStream { input -> input.transferTo(output) }
+            neon.withInputStream { input -> input.transferTo(output) }
+            // The native launcher reads this little-endian footer from EOF.
+            output.write(([67, 86, 82, 84, 48, 48, 49, 0] as byte[]))
+            [mergedDexFiles[0].length(), network.length(), neon.length()].each { long value ->
+                for (int index = 0; index < 8; index++) {
+                    output.write((int) ((value >>> (index * 8)) & 0xffL))
+                }
+            }
+        }
+        logger.lifecycle("Embedded standalone Calvin runtime: DEX=${mergedDexFiles[0].length()} bytes, " +
+            "NNUE=${network.length()} bytes, NEON=${neon.length()} bytes")
+    }
+}
+
 android {
     namespace 'ccc.chess.engines'
     compileSdk 35
@@ -206,20 +310,18 @@ android {
 
     sourceSets {
         main {
-            assets.srcDir(calvinAssetsDir)
-            // Only the generated OEX bridge and Calvin NNUE accelerator are
-            // packaged. Original root/native chess engines stay untouched.
-            jniLibs.setSrcDirs([calvinBridgeJniDir])
+            // The standalone launcher contains the DEX, NNUE and NEON payload;
+            // only this one OEX PIE executable is installed as a native payload.
+            jniLibs.setSrcDirs([calvinOexJniDir])
         }
-    }
-
-    androidResources {
-        noCompress += ['nnue']
     }
 
     packaging {
         jniLibs {
             // OEX opens the executable from ApplicationInfo.nativeLibraryDir.
+            // Preserve appended DEX/NNUE/NEON payload bytes: AGP must not strip
+            // or rewrite this executable as if it were an ordinary JNI library.
+            keepDebugSymbols += ['**/libcalvin.so']
             useLegacyPackaging = true
         }
     }
@@ -233,8 +335,12 @@ android {
 
 tasks.named('preBuild').configure {
     dependsOn(tasks.named('downloadCalvinNetwork'))
-    dependsOn(tasks.named('buildCalvinBridge'))
-    dependsOn(tasks.named('buildCalvinNeon'))
+}
+
+// DEX merge is independent of native-library merge. The latter must wait for
+// the DEX/network/NEON payload to be appended to the raw launcher.
+tasks.matching { it.name == 'mergeDebugNativeLibs' }.configureEach {
+    dependsOn(tasks.named('embedCalvinRuntime'))
 }
 
 dependencies {
