@@ -17,6 +17,8 @@ def calvinNetworkFile = calvinAssetsDir.map { it.file(calvinNetworkName) }
 def calvinBridgeJniDir = layout.buildDirectory.dir('generated/calvinBridgeJniLibs')
 def calvinBridgeBinary = calvinBridgeJniDir.map { it.file('arm64-v8a/libcalvinbridge.so') }
 def calvinBridgeSource = file('src/main/cpp/calvin_bridge.c')
+def calvinNeonBinary = calvinBridgeJniDir.map { it.file('arm64-v8a/libcalvinneon.so') }
+def calvinNeonSource = file('src/main/cpp/calvin_neon.c')
 
 tasks.register('downloadCalvinNetwork') {
     group = 'build setup'
@@ -128,6 +130,55 @@ tasks.register('buildCalvinBridge', Exec) {
     }
 }
 
+/**
+ * Build a separate JNI shared library containing only the NNUE's ARM64 NEON
+ * kernels. It is not an engine executable and is never registered with OEX.
+ */
+tasks.register('buildCalvinNeon', Exec) {
+    group = 'build setup'
+    description = 'Builds Calvin NNUE SCReLU and accumulator kernels for ARM64 NEON.'
+    inputs.file(calvinNeonSource)
+    outputs.file(calvinNeonBinary)
+
+    doFirst {
+        String sdkRoot = System.getenv('ANDROID_SDK_ROOT') ?: System.getenv('ANDROID_HOME')
+        if (sdkRoot == null || sdkRoot.trim().isEmpty()) {
+            throw new GradleException('ANDROID_SDK_ROOT/ANDROID_HOME is not set; install the Android SDK and NDK.')
+        }
+        String ndkRoot = System.getenv('ANDROID_NDK_HOME')
+        if (ndkRoot == null || ndkRoot.trim().isEmpty()) {
+            ndkRoot = new File(sdkRoot, "ndk/${calvinNdkVersion}").absolutePath
+        }
+
+        String hostTag = 'linux-x86_64'
+        String osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+        if (osName.contains('win')) hostTag = 'windows-x86_64'
+        else if (osName.contains('mac')) hostTag = 'darwin-x86_64'
+
+        String compilerName = osName.contains('win')
+            ? 'aarch64-linux-android21-clang.cmd'
+            : 'aarch64-linux-android21-clang'
+        File compiler = new File(ndkRoot,
+            "toolchains/llvm/prebuilt/${hostTag}/bin/${compilerName}")
+        if (!compiler.isFile()) {
+            throw new GradleException("Android NDK compiler not found: ${compiler}. " +
+                "Install NDK ${calvinNdkVersion} or set ANDROID_NDK_HOME.")
+        }
+
+        File output = calvinNeonBinary.get().asFile
+        output.parentFile.mkdirs()
+        commandLine compiler.absolutePath,
+            '-std=c11', '-O3', '-fPIC', '-shared', '-march=armv8-a+simd',
+            '-fvisibility=hidden',
+            '-Wl,--build-id=none',
+            '-Wl,-z,relro,-z,now',
+            '-Wl,-z,max-page-size=16384',
+            '-Wl,-soname,libcalvinneon.so',
+            calvinNeonSource.absolutePath,
+            '-o', output.absolutePath
+    }
+}
+
 android {
     namespace 'ccc.chess.engines'
     compileSdk 35
@@ -156,8 +207,8 @@ android {
     sourceSets {
         main {
             assets.srcDir(calvinAssetsDir)
-            // Only the generated bridge is considered for packaging. Existing
-            // root/native engine folders remain untouched and are bypassed.
+            // Only the generated OEX bridge and Calvin NNUE accelerator are
+            // packaged. Original root/native chess engines stay untouched.
             jniLibs.setSrcDirs([calvinBridgeJniDir])
         }
     }
@@ -183,6 +234,7 @@ android {
 tasks.named('preBuild').configure {
     dependsOn(tasks.named('downloadCalvinNetwork'))
     dependsOn(tasks.named('buildCalvinBridge'))
+    dependsOn(tasks.named('buildCalvinNeon'))
 }
 
 dependencies {
