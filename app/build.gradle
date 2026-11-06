@@ -6,8 +6,12 @@ plugins {
 
 final String calvinNetworkName = 'calvin1024_8b.nnue'
 final String calvinNetworkUrl = 'https://raw.githubusercontent.com/kelseyde/calvin-chess-engine/main/src/main/resources/calvin1024_8b.nnue'
-// 8 buckets * (768 * 1024 input weights) + 1024 input biases + 2048 output weights + 1 output bias, all int16.
-final long calvinExpectedNetworkBytes = (8L * 768L * 1024L + 1024L + 2048L + 1L) * 2L
+// Required NNUE tensor payload: 8 buckets * (768 * 1024 input weights)
+// + 1024 input biases + 2048 output weights + 1 output bias, all int16.
+// The upstream file may contain additional trailing bytes, so this is a
+// minimum payload size, not an exact file-size requirement.
+final long calvinNetworkPayloadBytes = (8L * 768L * 1024L + 1024L + 2048L + 1L) * 2L
+
 def calvinAssetsDir = layout.buildDirectory.dir('generated/calvinAssets')
 def calvinNetworkFile = calvinAssetsDir.map { it.file(calvinNetworkName) }
 
@@ -17,14 +21,15 @@ tasks.register('downloadCalvinNetwork') {
     outputs.file(calvinNetworkFile)
     outputs.upToDateWhen {
         File file = calvinNetworkFile.get().asFile
-        file.isFile() && file.length() == calvinExpectedNetworkBytes
+        file.isFile() && file.length() >= calvinNetworkPayloadBytes
     }
     doLast {
         File target = calvinNetworkFile.get().asFile
-        if (target.isFile() && target.length() == calvinExpectedNetworkBytes) {
+        if (target.isFile() && target.length() >= calvinNetworkPayloadBytes) {
             logger.lifecycle("Calvin NNUE already downloaded: ${target.length()} bytes")
             return
         }
+
         target.parentFile.mkdirs()
         File temporary = new File(target.parentFile, target.name + '.download')
         URL url = new URL(calvinNetworkUrl)
@@ -33,6 +38,7 @@ tasks.register('downloadCalvinNetwork') {
         connection.readTimeout = 120000
         connection.setRequestProperty('User-Agent', 'ChessEngines-Calvin-Android-Gradle')
         connection.connect()
+
         connection.getInputStream().withCloseable { input ->
             temporary.withOutputStream { output ->
                 byte[] buffer = new byte[64 * 1024]
@@ -42,11 +48,23 @@ tasks.register('downloadCalvinNetwork') {
                 }
             }
         }
-        if (!temporary.isFile() || temporary.length() != calvinExpectedNetworkBytes) {
-            long actualBytes = temporary.isFile() ? temporary.length() : 0L
+
+        long downloadedBytes = temporary.isFile() ? temporary.length() : 0L
+        if (!temporary.isFile() || downloadedBytes < calvinNetworkPayloadBytes) {
             temporary.delete()
-            throw new GradleException("Downloaded Calvin NNUE has an unexpected size (${actualBytes} bytes; expected ${calvinExpectedNetworkBytes}). URL: ${calvinNetworkUrl}")
+            throw new GradleException(
+                "Downloaded Calvin NNUE is truncated (${downloadedBytes} bytes; " +
+                "expected at least ${calvinNetworkPayloadBytes}). URL: ${calvinNetworkUrl}"
+            )
         }
+
+        if (downloadedBytes > calvinNetworkPayloadBytes) {
+            logger.lifecycle(
+                "Calvin NNUE contains ${downloadedBytes - calvinNetworkPayloadBytes} " +
+                'additional trailing bytes; retaining the complete upstream file.'
+            )
+        }
+
         if (target.exists() && !target.delete()) {
             temporary.delete()
             throw new GradleException("Cannot replace existing generated NNUE file: ${target}")
@@ -55,6 +73,7 @@ tasks.register('downloadCalvinNetwork') {
             temporary.delete()
             throw new GradleException("Cannot move downloaded Calvin NNUE into generated assets: ${target}")
         }
+
         logger.lifecycle("Downloaded Calvin NNUE (${target.length()} bytes)")
     }
 }
@@ -76,7 +95,6 @@ android {
     buildFeatures {
         buildConfig true
     }
-
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -94,7 +112,6 @@ android {
     androidResources {
         noCompress += ['nnue']
     }
-
     packaging {
         jniLibs {
             excludes += ['**/*.so']
