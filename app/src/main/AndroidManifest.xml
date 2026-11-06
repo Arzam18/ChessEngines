@@ -34,14 +34,6 @@
             android:authorities="ccc.chess.engines.MyEngineProvider"
             android:exported="true" />
 
-        <!-- The service runs Calvin's Java search in its own ART process. -->
-        <service
-            android:name="com.kelseyde.calvin.android.CalvinEngineService"
-            android:process=":calvin"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="ccc.chess.engines.action.BIND_CALVIN_ENGINE" />
-            </intent-filter>
-        </service>
+
     </application>
 </manifest>
