@@ -41,7 +41,15 @@ for required in (
 assert "base.apk" not in launcher, "OEX copies the executable; do not assume provider APK is beside it"
 assert "connect(" not in launcher and "SOCKET_PORT" not in launcher
 
-entrypoint = (ROOT / "app/src/main/java/com/kelseyde/calvin/android/CalvinUciMain.java").read_text()
+entrypoint_path = ROOT / "app/src/main/java/com/kelseyde/calvin/android/CalvinUciMain.java"
+if not entrypoint_path.is_file():
+    raise SystemExit(
+        "FAIL: required standalone ART entrypoint is missing: "
+        "app/src/main/java/com/kelseyde/calvin/android/CalvinUciMain.java\n"
+        "Add the CalvinUciMain.java file from the Stage 3 modified-files package "
+        "at that exact repository path, commit it, then run this workflow manually."
+    )
+entrypoint = entrypoint_path.read_text(encoding="utf-8")
 for required in (
     "CALVIN_NNUE_PATH", "CALVIN_NEON_LIBRARY", "calvin.nnue.path",
     "calvin.neon.path", "UCI.run(args)"
