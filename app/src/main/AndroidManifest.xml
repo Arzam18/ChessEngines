@@ -1,20 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="ccc.chess.engines">
-	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name="ccc.chess.engines.ChessEnginesApplication"
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:icon="@drawable/ic_launcher"
         android:label="Chess Engines OEX"
-        android:theme="@android:style/Theme.Translucent.NoTitleBar" >
+        android:theme="@android:style/Theme.Translucent.NoTitleBar">
+
         <activity
             android:name="ccc.chess.engines.MainActivity"
             android:configChanges="orientation|keyboardHidden|screenSize"
-            android:label="Chess Engines OEX" >
+            android:label="Chess Engines OEX">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <intent-filter>
                 <action android:name="intent.chess.provider.ENGINE" />
@@ -29,14 +34,14 @@
             android:authorities="ccc.chess.engines.MyEngineProvider"
             android:exported="true" />
 
-        <!-- Calvin is an in-process Java engine. It is intentionally not listed as an OEX executable. -->
+        <!-- The service runs Calvin's Java search in its own ART process. -->
         <service
             android:name="com.kelseyde.calvin.android.CalvinEngineService"
+            android:process=":calvin"
             android:exported="true">
             <intent-filter>
                 <action android:name="ccc.chess.engines.action.BIND_CALVIN_ENGINE" />
             </intent-filter>
         </service>
     </application>
-
 </manifest>
