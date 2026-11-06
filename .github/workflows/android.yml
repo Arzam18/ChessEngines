@@ -1,25 +1,18 @@
-
-name: Android APK
+name: Build Calvin OEX (ARM64)
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build Calvin-only OEX APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,49 +28,45 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Install Android SDK packages
+      - name: Install Android platform, build tools, and NDK
+        shell: bash
         run: |
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager --install \
             "platforms;android-35" \
-            "build-tools;35.0.0"
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
-
-      - name: Build debug APK
+      - name: Build Calvin OEX APK
+        shell: bash
         run: |
+          chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify APK exists
+      - name: Verify OEX executable packaging
+        shell: bash
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "::error::APK was not generated."
+          test -s "$APK"
+          mapfile -t NATIVE_LIBS < <(unzip -Z1 "$APK" | grep -E '^lib/[^/]+/[^/]+\.so$' || true)
+          printf 'Native payloads in APK:\n'
+          printf '  %s\n' "${NATIVE_LIBS[@]}"
+          if [[ "${#NATIVE_LIBS[@]}" -ne 1 || "${NATIVE_LIBS[0]}" != "lib/arm64-v8a/libcalvinbridge.so" ]]; then
+            echo "ERROR: APK must contain only the ARM64 Calvin bridge executable."
             exit 1
           fi
+          unzip -p "$APK" lib/arm64-v8a/libcalvinbridge.so > /tmp/libcalvinbridge.so
+          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$READELF" -h /tmp/libcalvinbridge.so | tee /tmp/bridge-elf-header.txt
+          grep -q 'AArch64' /tmp/bridge-elf-header.txt
+          grep -q 'DYN' /tmp/bridge-elf-header.txt
+          "$READELF" -l /tmp/libcalvinbridge.so | grep -q '/system/bin/linker64'
+          echo "Verified: ARM64 PIE bridge only; original native chess-engine libraries are not packaged."
 
-          echo "APK successfully generated:"
-          ls -lh "$APK"
-
-      - name: Verify native libraries are excluded
-        run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          if unzip -l "$APK" | grep -E 'lib/[^/]+/[^/]+\.so$'; then
-            echo "::error::Native shared libraries were found in the APK."
-            exit 1
-          fi
-
-          echo "Verified: No native .so libraries are packaged."
-
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: oex-calvin-debug-apk
+          name: oex-calvin-arm64-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
