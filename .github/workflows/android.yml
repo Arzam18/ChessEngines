@@ -75,17 +75,35 @@ jobs:
           python3 scripts/extract_calvin_payload.py \
             --input /tmp/libcalvin.so --output-dir /tmp/calvin-runtime
           READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          "$READELF" -h /tmp/libcalvin.so | tee /tmp/calvin-elf-header.txt
-          "$READELF" -h /tmp/calvin-runtime/libcalvinneon.so | tee /tmp/neon-elf-header.txt
-          grep -q 'AArch64' /tmp/calvin-elf-header.txt
-          grep -q 'DYN' /tmp/calvin-elf-header.txt
-          grep -q 'AArch64' /tmp/neon-elf-header.txt
-          grep -q 'DYN' /tmp/neon-elf-header.txt
-          "$READELF" -l /tmp/libcalvin.so | grep -q '/system/bin/linker64'
-          "$READELF" -Ws /tmp/calvin-runtime/libcalvinneon.so | grep -q 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_screluForwardNative'
-          "$READELF" -Ws /tmp/calvin-runtime/libcalvinneon.so | grep -q 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateFeaturesNative'
-          "$READELF" -Ws /tmp/calvin-runtime/libcalvinneon.so | grep -q 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateBothFromPreviousNative'
-          grep -a -q 'com/kelseyde/calvin/android/CalvinUciMain' /tmp/calvin-runtime/classes.dex
+          # Save complete readelf output before searching it. Piping llvm-readelf
+          # directly into grep -q can close the pipe early; with GitHub Actions'
+          # pipefail enabled, llvm-readelf may report an I/O error (exit 74).
+          "$READELF" -h /tmp/libcalvin.so > /tmp/calvin-elf-header.txt
+          "$READELF" -h /tmp/calvin-runtime/libcalvinneon.so > /tmp/neon-elf-header.txt
+          "$READELF" -l /tmp/libcalvin.so > /tmp/calvin-elf-program-headers.txt
+          "$READELF" -Ws /tmp/calvin-runtime/libcalvinneon.so > /tmp/calvin-neon-symbols.txt
+          cat /tmp/calvin-elf-header.txt
+          cat /tmp/neon-elf-header.txt
+
+          require_match() {
+            local pattern="$1"
+            local file="$2"
+            local description="$3"
+            if ! grep -Fq -- "$pattern" "$file"; then
+              echo "ERROR: $description was not found in $file"
+              return 1
+            fi
+          }
+
+          require_match 'AArch64' /tmp/calvin-elf-header.txt 'ARM64 launcher architecture'
+          require_match 'DYN' /tmp/calvin-elf-header.txt 'PIE launcher ELF type'
+          require_match 'AArch64' /tmp/neon-elf-header.txt 'ARM64 NEON library architecture'
+          require_match 'DYN' /tmp/neon-elf-header.txt 'NEON shared-library ELF type'
+          require_match '/system/bin/linker64' /tmp/calvin-elf-program-headers.txt 'Android ARM64 program interpreter'
+          require_match 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_screluForwardNative' /tmp/calvin-neon-symbols.txt 'SCReLU JNI export'
+          require_match 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateFeaturesNative' /tmp/calvin-neon-symbols.txt 'feature-update JNI export'
+          require_match 'Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateBothFromPreviousNative' /tmp/calvin-neon-symbols.txt 'two-perspective JNI export'
+          require_match 'com/kelseyde/calvin/android/CalvinUciMain' /tmp/calvin-runtime/classes.dex 'standalone ART entrypoint in DEX'
           echo "Verified: one self-contained ARM64 PIE OEX executable with DEX, NNUE and NEON embedded; original native chess engines are not packaged."
 
       - name: Upload APK
