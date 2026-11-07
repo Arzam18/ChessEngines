@@ -160,7 +160,7 @@ static void throw_illegal_argument(JNIEnv *env, const char *message) {
 }
 
 JNIEXPORT jint JNICALL
-Java_com_kelseyde_calvin_evaluation_CalvinNeon_screluForwardNative(
+Java_com_kelseyde_android_calvin_evaluation_CalvinNeon_screluForwardNative(
         JNIEnv *env,
         jclass type,
         jshortArray us_array,
@@ -256,7 +256,7 @@ static void update_features_jni(JNIEnv *env,
 }
 
 JNIEXPORT void JNICALL
-Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateFeaturesNative(
+Java_com_kelseyde_android_calvin_evaluation_CalvinNeon_updateFeaturesNative(
         JNIEnv *env,
         jclass type,
         jshortArray features_array,
@@ -273,7 +273,7 @@ Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateFeaturesNative(
 }
 
 JNIEXPORT void JNICALL
-Java_com_kelseyde_calvin_evaluation_CalvinNeon_updateBothFromPreviousNative(
+Java_com_kelseyde_android_calvin_evaluation_CalvinNeon_updateBothFromPreviousNative(
         JNIEnv *env,
         jclass type,
         jshortArray previous_white_array,
