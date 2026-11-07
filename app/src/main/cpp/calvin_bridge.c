@@ -18,7 +18,7 @@
  * The launcher extracts those files beside itself, then replaces itself with
  * Android app_process. UCI stdin/stdout/stderr remain inherited by ART.
  */
-#define CALVIN_MAIN_CLASS "com.kelseyde.android.CalvinUciMain"
+#define CALVIN_MAIN_CLASS "com.kelseyde.calvin.android.CalvinUciMain"
 #define CALVIN_RUNTIME_DIR ".calvin-runtime-6.1.1"
 #define CALVIN_MAX_DEX_BYTES (64ULL * 1024ULL * 1024ULL)
 #define CALVIN_MAX_NNUE_BYTES (64ULL * 1024ULL * 1024ULL)
