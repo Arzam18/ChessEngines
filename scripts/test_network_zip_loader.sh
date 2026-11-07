@@ -18,6 +18,6 @@ with zipfile.ZipFile(sys.argv[1], "w", compression=zipfile.ZIP_STORED) as z:
 PY
 javac --release 17 -d "$TMP/classes" \
   "$TMP/src/com/kelseyde/calvin/evaluation/activation/Activation.java" \
-  "$ROOT/app/src/main/java/com/kelseyde/calvin/evaluation/Network.java" \
+  "$ROOT/app/src/main/java/com/kelseyde/evaluation/Network.java" \
   "$ROOT/scripts/tests/NetworkZipLoaderTest.java"
 java -cp "$TMP/classes" com.kelseyde.calvin.evaluation.NetworkZipLoaderTest "$TMP/apk/base.apk"

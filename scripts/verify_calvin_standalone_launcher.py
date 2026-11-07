@@ -39,6 +39,7 @@ for required in (
 ):
     assert required in launcher, f"missing launcher behavior: {required}"
 assert "base.apk" not in launcher, "OEX copies the executable; do not assume provider APK is beside it"
+assert '#define CALVIN_MAIN_CLASS "com.kelseyde.calvin.android.CalvinUciMain"' in launcher
 assert "connect(" not in launcher and "SOCKET_PORT" not in launcher
 
 entrypoint_path = ROOT / "app/src/main/java/com/kelseyde/calvin/android/CalvinUciMain.java"
@@ -58,14 +59,14 @@ for required in (
 assert entrypoint.index('System.setProperty("calvin.nnue.path"') < entrypoint.index("UCI.run(args)")
 assert entrypoint.index('System.setProperty("calvin.neon.path"') < entrypoint.index("UCI.run(args)")
 
-network = (ROOT / "app/src/main/java/com/kelseyde/calvin/evaluation/Network.java").read_text()
+network = (ROOT / "app/src/main/java/com/kelseyde/evaluation/Network.java").read_text()
 assert "expectedBytes" in network and "fileBytes.length" in network
 assert 'location.startsWith("apkzip:")' in network  # Retained compatibility for file/ZIP network sources.
 
-neon = (ROOT / "app/src/main/java/com/kelseyde/calvin/evaluation/CalvinNeon.java").read_text()
+neon = (ROOT / "app/src/main/java/com/kelseyde/evaluation/CalvinNeon.java").read_text()
 assert "System.load(explicitPath)" in neon and "LOAD_FAILURE" in neon
 
-uci = (ROOT / "app/src/main/java/com/kelseyde/calvin/uci/UCI.java").read_text()
+uci = (ROOT / "app/src/main/java/com/kelseyde/uci/UCI.java").read_text()
 assert "NNUE backend: " in uci and uci.count("Bench.run(ENGINE") >= 3
 
 print("PASS: OEX publishes one ARM64 PIE executable named libcalvin.so")
